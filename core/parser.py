@@ -36,6 +36,10 @@ _NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 # 严格数字：只认"纯数字（可带千分位/货币符号/百分号/常用单位）"，用于类型推断
 _STRICT_NUM_RE = re.compile(r"[+-]?[¥$￥]?\d[\d,，]*(?:\.\d+)?\s*(?:元|万|％|%)?")
 
+# 纯时间字符串（08:00 / 20:00 / 17:30:00）——不是日期！
+# 若不拦截，pd.to_datetime 会把 "20:00" 绑定成"今天 20:00"，造成静默数据污染
+_TIME_ONLY_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?$")
+
 
 @dataclass
 class Anomaly:
@@ -105,6 +109,8 @@ def norm_date(v: Any):
     if not s or s.lower() in {"nan", "none", "null", "-", "--", "/", "无", "空"}:
         return None
     s = re.sub(r"\s+", " ", s)
+    if _TIME_ONLY_RE.fullmatch(s):
+        return None  # 纯时间值不是日期，宁缺毋滥
     for fmt in _DATE_FORMATS:
         try:
             return datetime.strptime(s, fmt)
@@ -221,6 +227,16 @@ def _infer_type(series: pd.Series, header: str, max_sample: int = 500) -> str:
 
     date_ok = sum(1 for v in sample if norm_date(v) is not None)
 
+    import datetime as _dt
+
+    def _is_time_only(v: Any) -> bool:
+        """纯时间值：datetime.time 对象（Excel 时间单元格）或 HH:MM 文本。"""
+        if isinstance(v, _dt.time):
+            return True
+        return isinstance(v, str) and bool(_TIME_ONLY_RE.fullmatch(v.strip()))
+
+    time_ok = sum(1 for v in sample if _is_time_only(v))
+
     def _strict_num(v: Any) -> bool:
         """严格数字判定：原生数值，或"纯数字(可带货币符/单位)"且不含字母前缀的文本。"""
         if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -234,6 +250,8 @@ def _infer_type(series: pd.Series, header: str, max_sample: int = 500) -> str:
     num_ok = sum(1 for v in sample if _strict_num(v))
     n = len(sample)
 
+    if time_ok / n >= 0.5:
+        return "text"  # 时间列保留原值（HH:MM），供表达式与日期列拼接
     if hint_date and date_ok / n >= 0.5:
         return "date"
     if hint_num and num_ok / n >= 0.5:
@@ -369,8 +387,25 @@ _OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 
 
-def _is_encrypted_stream(head: bytes) -> bool:
-    return head[:8] == _OLE_MAGIC
+def _is_encrypted_stream(raw_bytes: bytes) -> bool:
+    """判断 OLE2 文件是否真加密。
+
+    注意：未加密的 .xls 本身就是 OLE2 容器（官方数据集实测踩坑），
+    只看魔数会误判。用 msoffcrypto 的 is_encrypted() 精确判断；
+    其内部解析记录失败时视为普通未加密文件。
+    """
+    if raw_bytes[:8] != _OLE_MAGIC:
+        return False
+    try:
+        import msoffcrypto
+    except ImportError:
+        # 没有判定组件时按可能加密处理，走可操作的提示信息
+        return True
+    try:
+        of = msoffcrypto.OfficeFile(io.BytesIO(raw_bytes))
+        return bool(of.is_encrypted())
+    except Exception:
+        return False
 
 
 def _decrypt_stream(raw_bytes: bytes, password: str) -> io.BytesIO:
@@ -482,38 +517,39 @@ def load_table(path_or_file, name: str | None = None, sheet: int | str = 0,
     if isinstance(path_or_file, str):
         path = path_or_file
         tname = name or path.replace("\\", "/").rsplit("/", 1)[-1]
-        with open(path, "rb") as fh:
-            head = fh.read(8)
         ext = "." + path.rsplit(".", 1)[-1].lower() if "." in path.rsplit("/", 1)[-1] else ""
         if ext in IMAGE_EXTS:
             return load_image_table(path, name, llm=llm)
-        if _is_encrypted_stream(head):
+        with open(path, "rb") as fh:
+            raw_bytes = fh.read()
+        if _is_encrypted_stream(raw_bytes):
             if not password:
                 raise ValueError(
                     f"「{tname}」是加密文件：请在上传区域的「文件密码」框填写打开密码后重新上传，"
                     "或提供未加密版本。")
-            data = _decrypt_stream(open(path, "rb").read(), password)
+            data = _decrypt_stream(raw_bytes, password)
             return _load_from_bytes(data.getvalue(), name, password, llm)
-        raw = pd.read_excel(path, header=None, dtype=object) if not path.lower().endswith(".csv") \
-            else pd.read_csv(path, header=None, dtype=object)
+        if path.lower().endswith(".csv"):
+            raw = pd.read_csv(io.BytesIO(raw_bytes), header=None, dtype=object)
+        else:
+            raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, dtype=object)
     else:
         path = None
         tname = name or getattr(path_or_file, "name", "表格")
-        head = path_or_file.read(8)
-        path_or_file.seek(0)
+        raw_bytes = path_or_file.read()
         ext = ("." + tname.rsplit(".", 1)[-1].lower()) if "." in str(tname) else ""
         if ext in IMAGE_EXTS:
-            return load_image_table(path_or_file.read(), name, llm=llm)
-        if _is_encrypted_stream(head):
+            return load_image_table(raw_bytes, name, llm=llm)
+        if _is_encrypted_stream(raw_bytes):
             if not password:
                 raise ValueError(
                     f"「{tname}」是加密文件：请填写打开密码后重新上传，或提供未加密版本。")
-            data = _decrypt_stream(path_or_file.read(), password)
+            data = _decrypt_stream(raw_bytes, password)
             return _load_from_bytes(data.getvalue(), name, password, llm)
         if tname.lower().endswith(".csv"):
-            raw = pd.read_csv(path_or_file, header=None, dtype=object)
+            raw = pd.read_csv(io.BytesIO(raw_bytes), header=None, dtype=object)
         else:
-            raw = pd.read_excel(path_or_file, header=None, dtype=object)
+            raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, dtype=object)
 
     return _build_table(raw, tname, path)
 
@@ -521,7 +557,7 @@ def load_table(path_or_file, name: str | None = None, sheet: int | str = 0,
 def _load_from_bytes(data: bytes, name: str | None, password: str | None, llm) -> RawTable:
     """从内存字节载入（解密后 / 上传流）。图片走 OCR，其余按表格解析。"""
     tname = name or "表格"
-    if data[:8] == _OLE_MAGIC and password:
+    if _is_encrypted_stream(data) and password:
         data = _decrypt_stream(data, password).getvalue()
     ext = ("." + tname.rsplit(".", 1)[-1].lower()) if "." in str(tname) else ""
     if ext in IMAGE_EXTS:

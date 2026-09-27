@@ -531,6 +531,11 @@ class FreeformSkill(Skill):
             item["label"], item["source"], item["expr"], item["dtype"] = lab, src, expr, dtype
             if not expr and (not src or src not in df_cols):
                 raise ValueError(f"目标列「{lab}」的来源列「{src}」在源表中不存在，且无计算表达式。")
+            # 模型常把固定常量写成裸值（expr="是"），求值时会 NameError。
+            # 确定性兜底：不含运算符/括号/函数调用、不是源列名、也不是数字的短表达式 → 按字符串字面量处理
+            if expr and not src and not re.search(r"[+\-*/()\[\]\s:\"']", expr) \
+                    and expr not in df_cols and not re.fullmatch(r"[+-]?\d+(?:\.\d+)?", expr):
+                item["expr"] = f'"{expr}"'
 
         # ---- 结构化筛选：field ∈ 源表列名 -> 映射前筛；field ∈ 目标列名 -> 映射后筛（支持计算列）
         op_names = {"eq", "ne", "contains", "gt", "ge", "lt", "le"}

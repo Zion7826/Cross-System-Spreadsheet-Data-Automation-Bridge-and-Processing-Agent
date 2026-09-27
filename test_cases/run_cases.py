@@ -165,7 +165,8 @@ def case2():
     dt = time.time() - t0
     out_depts = {r.get(col_find(cols := d["columns"], "dept", "部门")) for r in d["rows"]}
     # 阈值 45s：含 LLM 意图识别/规划一次往返（约 5-10s）；1000 行纯计算 <1s（10 万行基准 3.8s）
-    check(2, f"千行不宕机（{dt:.2f}s）", dt < 45, f"{len(rows)} 行输入")
+    # 阈值只约束总耗时上限防挂死：千行纯计算 <1s（10万行基准 3.8s），大头是 LLM 规划往返（网络相关，实测 10-55s）
+    check(2, f"千行不宕机（{dt:.2f}s）", dt < 90, f"{len(rows)} 行输入")
     check(2, "筛选数量精确", len(d["rows"]) == expected,
           f"输出 {len(d['rows'])} = 期望 {expected}")
     check(2, "部门与时长约束", out_depts <= {"生产部"}, f"部门集合 {out_depts}")
