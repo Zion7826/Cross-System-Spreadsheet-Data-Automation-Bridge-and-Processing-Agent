@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>表格桥接智能体 · 操作手册</title>
+<style>
+:root {
+  --brand: #2456C8; --ink: #24292F; --muted: #6E7480; --line: #D8DCE3; --soft: #EFF3FB;
+}
+body { font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; color: #24292F; font-size: 11pt; line-height: 1.7; }
+h1 { font-size: 22pt; color: #24292F; }
+h2 { font-size: 15pt; color: #2456C8; border-bottom: 1pt solid #D8DCE3; padding-bottom: 4pt; margin-top: 22pt; }
+h3 { font-size: 12.5pt; color: #24292F; margin-top: 16pt; }
+p { margin: 6pt 0; }
+.cover-meta { color: #6E7480; font-size: 10.5pt; }
+figure { margin: 10pt 0; }
+figcaption { color: #6E7480; font-size: 9.5pt; margin-top: 3pt; }
+table { border-collapse: collapse; width: 100%; font-size: 10.5pt; }
+th { background: #EFF3FB; color: #24292F; border: 0.5pt solid #D8DCE3; padding: 5pt 7pt; text-align: left; }
+td { border: 0.5pt solid #D8DCE3; padding: 5pt 7pt; vertical-align: top; }
+blockquote { border-left: 2.5pt solid #2456C8; background: #F7F9FD; margin: 8pt 0; padding: 6pt 10pt; color: #43506B; font-size: 10.5pt; }
+code { font-family: Consolas, monospace; background: #F2F4F7; padding: 1pt 4pt; font-size: 10pt; }
+</style>
+</head>
+<body>
+
+<h1>表格桥接智能体 · 操作手册</h1>
+<p class="cover-meta">跨系统表格数据自动化桥接与处理智能体 ｜ 版本 V1.0 ｜ 2026 年 9 月</p>
+
+<h2>一、系统概述</h2>
+<p>表格桥接智能体面向企业内部异构老旧系统（ERP、OA、HR 等）之间的数据流转场景。业务人员只需上传各系统导出的原始表格，用一句自然语言描述处理要求，系统即自动完成表头语义解析、跨表关联计算与目标格式转换，产出可直接导入目标系统的标准模板文件。</p>
+<p>系统由四个页面组成：</p>
+<table>
+<tr><th style="width:22%">页面</th><th>职责</th></tr>
+<tr><td>智能体工作台</td><td>主操作入口：上传数据、输入指令、运行智能体、核对结果、下载导入文件</td></tr>
+<tr><td>通用字段映射</td><td>面向未知结构的新报表，逐列配置映射关系或计算表达式</td></tr>
+<tr><td>验收自检</td><td>一键执行逻辑精度、格式兼容、抗错鲁棒三条验收项，输出 PASS / FAIL 与证据</td></tr>
+<tr><td>大模型设置</td><td>配置 OpenAI 兼容格式的大模型接口，用于意图识别与未知表头映射兜底</td></tr>
+</table>
+<blockquote>准确性设计原则：所有数值计算与逻辑判定均由确定性规则引擎完成；大模型只参与"理解"环节（意图识别、未知表头语义匹配），不参与任何计算，确保结果零失真。</blockquote>
+
+<h2>二、快速开始</h2>
+<h3>2.1 环境要求</h3>
+<ul>
+<li>操作系统：Windows / macOS / Linux 均可；</li>
+<li>Python 3.10 及以上，依赖：fastapi、uvicorn、pandas、openpyxl、python-dateutil；</li>
+<li>浏览器：Chrome / Edge 等现代浏览器。</li>
+</ul>
+<h3>2.2 启动系统</h3>
+<p>在 <code>agent_app/webapp</code> 目录下执行：</p>
+<blockquote><code>python -m uvicorn server:app --host 127.0.0.1 --port 8620</code></blockquote>
+<p>浏览器访问 <code>http://127.0.0.1:8620</code> 即可使用。首次进入工作台页面如下（尚未载入数据）：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_initial.png" style="width:460pt"><figcaption>图 1　智能体工作台初始页面</figcaption></figure>
+
+<h2>三、智能体工作台操作</h2>
+<h3>3.1 第一步：载入数据源</h3>
+<p>点击「上传导出表」选择一个或多个系统导出文件（支持 xlsx / xls / csv），或点击「载入演示数据」体验完整流程。上传后系统自动解析表结构，并按表头语义识别每张表的业务角色（如 OA 请假单、HR 年假余额表、ERP 加班记录），识别结果与置信度直接标注在文件卡片上：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_data_loaded.png" style="width:460pt"><figcaption>图 2　已载入三张演示导出表，角色自动识别完成</figcaption></figure>
+<blockquote>解析阶段即完成数据体检：空行、乱码字符、非法日期等问题数据会被自动隔离并计入"异常"数量，不会进入后续计算。</blockquote>
+
+<h3>3.2 第二步：输入业务指令</h3>
+<p>在「业务指令」框中用自然语言描述处理要求，例如：</p>
+<table>
+<tr><th style="width:55%">指令示例</th><th>触发的技能</th></tr>
+<tr><td>做假期余量结算：先扣年假额度，超出部分自动转成事假，年假和事假分行记录</td><td>假期余量结算</td></tr>
+<tr><td>把生产部 2026年1月到3月 加班时长大于等于2小时的记录，整理成 HR 加班导入模板</td><td>加班记录转 HR 导入</td></tr>
+<tr><td>结算年假，只看装配车间 2 月的记录</td><td>假期余量结算（带动态筛选）</td></tr>
+</table>
+<p>也可以直接点击指令框下方的示例标签快速填入。系统按指令关键词自动选择技能，也可在「执行技能」下拉框中手动指定。</p>
+
+<h3>3.3 第三步：运行并查看执行轨迹</h3>
+<p>点击「运行智能体」。执行完成后，结果区默认展示<b>执行轨迹</b>——意图解析、源表角色判定、字段映射、跨表计算等每一步的中间结论全部可见，处理过程透明可追溯：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_run_overview.png" style="width:460pt"><figcaption>图 3　执行完成：结果总览与执行轨迹</figcaption></figure>
+
+<h3>3.4 第四步：核对字段映射（可修正）</h3>
+<p>切换到「字段映射」页签，查看每个目标字段对应的源列与匹配方式。若某条映射不符合业务预期，直接在下拉框中改为正确的源列，点击「按修正后的映射重算」，系统立即以人工指定的映射重新生成结果：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_mapping.png" style="width:460pt"><figcaption>图 4　字段映射明细，支持人工修正后重算</figcaption></figure>
+
+<h3>3.5 第五步：核对结果数据与计算明细</h3>
+<p>「结果数据」页签展示生成的导入模板内容预览；「计算明细」页签逐单展示年假抵扣、事假转化的中间计算过程与员工剩余年假，方便与人工 Excel 复算结果逐格核对：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_result_data.png" style="width:460pt"><figcaption>图 5　结果数据预览</figcaption></figure>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_detail.png" style="width:460pt"><figcaption>图 6　逐单计算明细与剩余年假汇总</figcaption></figure>
+
+<h3>3.6 第六步：处理异常数据</h3>
+<p>「异常日志」页签列出所有被隔离的问题行，包括源表、行号、异常类型、说明与原始数据，供人工复核补录。正常数据不受异常行影响，完整输出：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_anomaly.png" style="width:460pt"><figcaption>图 7　异常日志：隔离行明细，随导出文件一并交付</figcaption></figure>
+
+<h3>3.7 第七步：下载导入文件</h3>
+<p>点击「下载导入文件（含异常日志）」。可选日期输出格式：</p>
+<ul>
+<li><b>Excel 日期型</b>：单元格为真正的日期类型，适配支持日期校验的目标系统；</li>
+<li><b>yyyy-mm-dd 文本</b>：适配仅识别文本日期的老旧系统。</li>
+</ul>
+<p>下载的 xlsx 文件包含三个工作表：导入主表（列名、列序与目标系统模板完全一致）、异常处理日志、计算明细（如适用）。</p>
+
+<h2>四、通用字段映射（未知结构自适应）</h2>
+<p>面对不在预设场景内的新报表，进入「通用字段映射」页：上传任意结构报表后，逐列配置目标列名、来源列与数据类型；来源也可选择"写表达式"，支持四则运算与 round 等函数（变量为源列名，如 <code>round(时长*8)</code>）。还可填写自然语言筛选条件。配置完成后点击「生成导入文件」：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_generic.png" style="width:460pt"><figcaption>图 8　通用字段映射：逐列配置 + 表达式 + 自然语言筛选</figcaption></figure>
+
+<h2>五、验收自检</h2>
+<p>「验收自检」页对应任务书三条验收要求一键执行：</p>
+<table>
+<tr><th style="width:24%">验收项</th><th>验证内容</th></tr>
+<tr><td>逻辑计算精度</td><td>年假抵扣与事假转化的固定用例，与人工 Excel 公式复算结果逐格比对</td></tr>
+<tr><td>格式兼容度</td><td>列名、列序与空白模板一致；无合并单元格、无公式；数值列为数字、日期列为日期</td></tr>
+<tr><td>抗错鲁棒性</td><td>注入空行、乱码、非法日期后不宕机，正常数据完整输出，异常行进入日志</td></tr>
+</table>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_verify.png" style="width:460pt"><figcaption>图 9　验收自检：三条验收项全部 PASS，附证据说明</figcaption></figure>
+
+<h2>六、大模型设置（可选）</h2>
+<p>系统在不配置大模型时即可完整运行（纯规则模式）。如需增强自然语言理解能力，可在「大模型设置」页配置任意 OpenAI 兼容接口：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_settings.png" style="width:460pt"><figcaption>图 10　大模型设置：OpenAI 兼容格式，带连接测试</figcaption></figure>
+<ul>
+<li><b>API Base URL</b>：OpenAI 兼容接口地址，以 /v1 结尾；</li>
+<li><b>API Key</b>：对应服务的密钥，保存后不再回显；</li>
+<li><b>模型名称</b>：如 glm-5.3-flash、gpt-4o-mini 等；</li>
+<li>配置后点击「测试连接」，提示"连接成功"即生效。</li>
+</ul>
+<blockquote>调用约束：大模型仅在意图识别与未知表头映射兜底时被调用，temperature 固定为 0；所有数值与逻辑判定始终由确定性规则引擎完成，与所配置的模型无关。</blockquote>
+
+<h2>七、常见问题</h2>
+<table>
+<tr><th style="width:38%">问题</th><th>处理方式</th></tr>
+<tr><td>上传后提示"部分源表已失效"</td><td>服务重启会清空内存中的会话数据，重新上传或重新载入演示数据即可</td></tr>
+<tr><td>识别的表角色不对</td><td>在「执行技能」区的表角色分配下拉框中手动指定对应文件</td></tr>
+<tr><td>某列映射到了错误的源列</td><td>在「字段映射」页签修正后点击重算</td></tr>
+<tr><td>导出文件导入目标系统报日期错误</td><td>将日期输出格式切换为"yyyy-mm-dd 文本"后重新下载</td></tr>
+<tr><td>指令中的筛选条件未生效</td><td>检查部门、时间写法是否与源表数据一致；或改用「通用字段映射」页的筛选条件输入框</td></tr>
+</table>
+
+</body>
+</html>

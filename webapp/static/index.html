@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>表格桥接智能体 · 跨系统数据自动化处理</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="logo"><span class="t">表格桥接智能体</span><small>跨系统表格数据自动化桥接与处理</small></div>
+    <div class="nav-item active" data-page="workbench">智能体工作台</div>
+    <div class="nav-item" data-page="chat">对话模式</div>
+    <div class="nav-item" data-page="generic">通用字段映射</div>
+    <div class="nav-item" data-page="verify">验收自检</div>
+    <div class="nav-item" data-page="settings">大模型设置</div>
+    <div class="foot">数值计算与逻辑判定由确定性规则引擎完成；<br>大模型仅参与意图识别与未知表头映射兜底，<br>确保结果零失真。</div>
+  </aside>
+
+  <main class="main">
+    <!-- ============ 工作台 ============ -->
+    <section id="page-workbench">
+      <h1>智能体工作台</h1>
+      <div class="sub">自然语言指令 → 异构表头解析 → 跨表关联计算 → 目标系统导入模板（异常自动隔离）</div>
+      <div id="wb-err"></div>
+
+      <div class="row">
+        <div class="col card">
+          <h3>数据源 <span class="tag">xlsx / xls / csv / 加密表格 / 扫描件图片，可多选</span></h3>
+          <div class="row">
+            <label class="btn small">上传导出表<input type="file" id="file-input" multiple accept=".xlsx,.xls,.csv,.png,.jpg,.jpeg,.bmp" hidden></label>
+            <button class="btn small" id="btn-demo">载入演示数据</button>
+            <button class="btn small" id="btn-clear">清空</button>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <input type="text" id="file-password" placeholder="文件打开密码（加密文件必填，普通文件留空）" style="flex:1">
+          </div>
+          <div id="file-list"></div>
+        </div>
+
+        <div class="col card">
+          <h3>业务指令 <span class="tag">用一句话描述要做什么</span></h3>
+          <textarea id="instruction" placeholder="例如：结算年假，先扣年假额度，超出部分自动转事假，只处理生产部 1 月的记录"></textarea>
+          <div class="chips" id="examples"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>执行技能 <span class="tag">按指令自动识别，可手动切换</span></h3>
+        <div class="row">
+          <div style="flex:1;min-width:280px"><label class="f">技能</label><select id="skill-sel"></select>
+            <div class="note" id="skill-desc"></div></div>
+          <div style="flex:1.4;min-width:340px" id="role-box"></div>
+        </div>
+        <div style="margin-top:14px">
+          <button class="btn primary" id="btn-run">运行智能体</button>
+        </div>
+      </div>
+
+      <div id="result-area"></div>
+    </section>
+
+    <!-- ============ 对话模式 ============ -->
+    <section id="page-chat" style="display:none">
+      <h1>对话模式</h1>
+      <div class="sub">交互式多轮对话：智能体结合上下文执行任务、追问澄清、按新条件重跑；数据源与工作台共用</div>
+      <div id="chat-err"></div>
+      <div class="card chat-panel">
+        <div class="chat-msgs" id="chat-msgs"></div>
+        <div class="chat-input-row">
+          <textarea id="chat-input" rows="2" placeholder="例如：结算年假，超出部分转事假…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <div class="col" style="gap:8px">
+            <button class="btn primary" id="btn-chat-send">发送</button>
+            <button class="btn small" id="btn-chat-clear">清空对话</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 通用映射 ============ -->
+    <section id="page-generic" style="display:none">
+      <h1>通用字段映射</h1>
+      <div class="sub">面向未知结构的新报表：上传 → 逐列指定映射或写计算表达式 → 直接产出导入模板</div>
+      <div id="gn-err"></div>
+
+      <div class="card">
+        <h3>源报表</h3>
+        <div class="row">
+          <label class="btn small">上传任意结构报表<input type="file" id="gn-file" accept=".xlsx,.xls,.csv" hidden></label>
+          <button class="btn small" id="btn-gn-demo">用演示请假单试试</button>
+        </div>
+        <div id="gn-file-info" class="note"></div>
+        <div id="gn-preview" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <h3>目标列配置 <span class="tag">来源可选源列，或写表达式（变量为源列名，如 round(时长*8)）</span></h3>
+        <div class="spec-grid spec-head"><div>目标列名</div><div>来源列 / 表达式</div><div>类型</div><div>表达式（来源选"写表达式"时生效）</div><div></div></div>
+        <div id="spec-list"></div>
+        <button class="btn small" id="btn-add-spec">添加一列</button>
+        <div class="row" style="margin-top:12px;align-items:flex-end">
+          <div style="flex:1;min-width:260px"><label class="f">筛选条件（可选，自然语言）</label>
+            <input type="text" id="gn-cond" placeholder="如：部门=生产部 且 请假天数大于等于2"></div>
+          <button class="btn primary" id="btn-gn-run">生成导入文件</button>
+        </div>
+      </div>
+      <div id="gn-result"></div>
+    </section>
+
+    <!-- ============ 验收自检 ============ -->
+    <section id="page-verify" style="display:none">
+      <h1>验收自检</h1>
+      <div class="sub">对照任务书三条验收项（逻辑精度 / 格式兼容 / 抗错鲁棒）自动执行，输出 PASS / FAIL 与证据</div>
+      <button class="btn primary" id="btn-verify">运行全部验收项</button>
+      <div id="verify-list" style="margin-top:14px"></div>
+    </section>
+
+    <!-- ============ 设置 ============ -->
+    <section id="page-settings" style="display:none">
+      <h1>大模型设置</h1>
+      <div class="sub">OpenAI 兼容格式。仅用于意图识别与未知表头映射兜底；不配置也可完整运行（纯规则模式）。Key 保存后不再回显。</div>
+      <div class="card" style="max-width:640px">
+        <label class="f">API Base URL（OpenAI 兼容，以 /v1 结尾）</label>
+        <input type="text" id="set-base" placeholder="https://api.openai.com/v1">
+        <label class="f">API Key</label>
+        <input type="password" id="set-key" placeholder="sk-...">
+        <label class="f">模型名称</label>
+        <input type="text" id="set-model" placeholder="gpt-4o-mini">
+        <div class="row" style="margin-top:14px">
+          <button class="btn primary" id="btn-save-settings">保存配置</button>
+          <button class="btn" id="btn-test-settings">测试连接</button>
+          <span id="set-status" style="align-self:center"></span>
+        </div>
+        <div class="note">兼容所有 OpenAI 格式接口（/chat/completions）。调用时 temperature 固定为 0，保证结果稳定可复现。</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="mask" id="mask"><span class="spin"></span><span id="mask-text">正在执行…</span></div>
+<script src="app.js"></script>
+</body>
+</html>

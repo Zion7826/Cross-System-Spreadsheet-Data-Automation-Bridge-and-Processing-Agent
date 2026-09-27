@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>应用案例 · 假期余量结算自动化</title>
+<style>
+:root {
+  --brand: #2456C8; --ink: #24292F; --muted: #6E7480; --line: #D8DCE3; --soft: #EFF3FB;
+}
+body { font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; color: #24292F; font-size: 11pt; line-height: 1.7; }
+h1 { font-size: 22pt; color: #24292F; }
+h2 { font-size: 15pt; color: #2456C8; border-bottom: 1pt solid #D8DCE3; padding-bottom: 4pt; margin-top: 22pt; }
+h3 { font-size: 12.5pt; color: #24292F; margin-top: 16pt; }
+p { margin: 6pt 0; }
+.cover-meta { color: #6E7480; font-size: 10.5pt; }
+figure { margin: 10pt 0; }
+figcaption { color: #6E7480; font-size: 9.5pt; margin-top: 3pt; }
+table { border-collapse: collapse; width: 100%; font-size: 10.5pt; }
+th { background: #EFF3FB; color: #24292F; border: 0.5pt solid #D8DCE3; padding: 5pt 7pt; text-align: left; }
+td { border: 0.5pt solid #D8DCE3; padding: 5pt 7pt; vertical-align: top; }
+blockquote { border-left: 2.5pt solid #2456C8; background: #F7F9FD; margin: 8pt 0; padding: 6pt 10pt; color: #43506B; font-size: 10.5pt; }
+code { font-family: Consolas, monospace; background: #F2F4F7; padding: 1pt 4pt; font-size: 10pt; }
+</style>
+</head>
+<body>
+
+<h1>应用案例：假期余量结算自动化</h1>
+<p class="cover-meta">从三张手工导出表到一份可直接导入的 HR 模板 ｜ 表格桥接智能体 ｜ 2026 年 9 月</p>
+
+<h2>一、业务背景与痛点</h2>
+<p>某制造型企业的人事每月需要处理员工请假结算：员工请假优先从年假额度中扣减，年假不足的部分自动转为事假。数据分散在三个互不连通的老旧系统中——OA 系统记录请假单，HR 系统维护年假余额，两者之间没有接口。</p>
+<p>传统做法是纯手工 Excel 搬运：</p>
+<table>
+<tr><th style="width:30%">手工环节</th><th>存在的问题</th></tr>
+<tr><td>分别登录 OA / HR 导出表格</td><td>两张表表头命名、日期格式、人员标识均不一致，需人工对齐</td></tr>
+<tr><td>按工号逐单匹配余额、计算抵扣</td><td>VLOOKUP + 手工判断，月均数百单，易错且不可复溯</td></tr>
+<tr><td>年假不足的拆分为事假行</td><td>手工拆行最易出错的环节，直接影响员工假期台账</td></tr>
+<tr><td>整理成 HR 系统要求的导入模板</td><td>格式要求严格，列序、类型稍有偏差即导入报错</td></tr>
+</table>
+<p>本案例演示：用表格桥接智能体，将上述流程压缩为「上传 → 一句话 → 下载」三步。</p>
+
+<h2>二、数据与场景设定</h2>
+<p>案例使用三张系统导出表（演示数据已按真实场景注入典型脏数据）：</p>
+<table>
+<tr><th style="width:26%">源表</th><th style="width:22%">规模</th><th>内容与注入的干扰</th></tr>
+<tr><td>OA 请假单导出</td><td>26 行 × 8 列</td><td>工号、姓名、假期类型、起止日期、请假天数等；含空行、乱码字符（!!! / ###）、缺工号行</td></tr>
+<tr><td>HR 年假余额导出</td><td>16 行 × 5 列</td><td>工号、姓名、年假额度、已休天数等；个别员工在请假单中出现但无余额记录</td></tr>
+<tr><td>ERP 加班记录导出</td><td>60 行 × 8 列</td><td>部门、日期、加班时长等；含全角数字、异常间隔符</td></tr>
+</table>
+
+<h2>三、操作全流程</h2>
+<h3>3.1 载入数据</h3>
+<p>在工作台点击「载入演示数据」，系统自动完成三张表的结构解析与角色识别（请假单 → leave，余额表 → balance，加班记录 → overtime），并即时报告解析阶段隔离的异常：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_data_loaded.png" style="width:460pt"><figcaption>图 1　三张源表载入完成，角色自动识别</figcaption></figure>
+
+<h3>3.2 一句话下达指令</h3>
+<p>输入指令：「做假期余量结算：先扣年假额度，超出部分自动转成事假，年假和事假分行记录」，点击「运行智能体」。系统自动选择「假期余量结算」技能并完成跨表计算，用时不足 1 秒：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_run_overview.png" style="width:460pt"><figcaption>图 2　执行完成：输出 31 行，隔离异常 4 条，执行轨迹全程可视</figcaption></figure>
+
+<h3>3.3 核对结果</h3>
+<p>在「结果数据」页签核对生成的导入模板：年假行与事假行分离记录，余额递减准确；「计算明细」页签逐单展示抵扣过程：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_result_data.png" style="width:460pt"><figcaption>图 3　生成的导入模板：年假 / 事假分行记录</figcaption></figure>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_detail.png" style="width:460pt"><figcaption>图 4　逐单计算明细与员工剩余年假</figcaption></figure>
+
+<h3>3.4 异常复核与文件下载</h3>
+<p>4 条被隔离的异常行在「异常日志」中逐行列明（空行、乱码天数、日期不可解析、缺关联键），供人事复核补录。点击「下载导入文件」，得到包含导入主表、异常日志、计算明细三个工作表的 xlsx 文件：</p>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_anomaly.png" style="width:460pt"><figcaption>图 5　异常日志：隔离行明细随文件交付</figcaption></figure>
+
+<h2>四、计算逻辑解析</h2>
+<p>假期余量结算技能对每张请假单执行以下确定性规则：</p>
+<table>
+<tr><th style="width:18%">步骤</th><th>规则</th></tr>
+<tr><td>1 关联</td><td>以工号（缺失时退化用姓名）将请假单与余额表关联；两表均匹配不上的单据隔离进异常日志</td></tr>
+<tr><td>2 取数</td><td>请假天数优先取单据字段；缺失时按起止日期推算（含首尾）；仍无法确定的隔离</td></tr>
+<tr><td>3 判定</td><td>年假单：剩余额度 ≥ 请假天数 → 全额扣年假；剩余额度 < 请假天数 → 拆两行，年假行 = 剩余额度，事假行 = 差额；非年假单（事假/病假等）直接按原类型记录</td></tr>
+<tr><td>4 递减</td><td>同一员工多张单按日期顺序依次抵扣，每单使用扣减后的实时余额，余额归零后全额转事假</td></tr>
+<tr><td>5 输出</td><td>生成目标模板列结构，数值列为数字类型、日期列为日期类型；异常行不进入主表</td></tr>
+</table>
+<blockquote>所有规则由代码实现、结果可复算，不依赖大模型生成任何数值——这是"绝对准确性"技术声明的落点。</blockquote>
+
+<h2>五、验收对照</h2>
+<p>本案例场景即任务书验收要求的直接覆盖，系统内置验收自检可随时复跑：</p>
+<table>
+<tr><th style="width:24%">验收要求</th><th>本案例验证方式</th><th style="width:14%">结果</th></tr>
+<tr><td>逻辑计算精度</td><td>余额充足 / 余额不足拆分 / 缺余额记录 / 非年假单四类固定用例，与人工 Excel 公式复算逐格一致</td><td>PASS</td></tr>
+<tr><td>格式兼容度</td><td>列名列序与空白模板完全一致，无合并单元格、无公式，数值与日期类型正确</td><td>PASS</td></tr>
+<tr><td>抗错鲁棒性</td><td>注入空行、!!!、###、全角数字后不宕机，正常数据 31 行完整输出，4 条异常行进日志</td><td>PASS</td></tr>
+</table>
+<figure><img src="D:/WorkBuddy/希望早睡百景/agent_app/docs_assets/web/shot_verify.png" style="width:460pt"><figcaption>图 6　验收自检页：三条验收项 PASS 及证据</figcaption></figure>
+
+<h2>六、效能对比</h2>
+<table>
+<tr><th style="width:30%">环节</th><th style="width:32%">手工模式</th><th>智能体模式</th></tr>
+<tr><td>表头对齐与关联</td><td>人工比对，约 20-30 分钟</td><td>自动语义匹配，秒级，可人工修正</td></tr>
+<tr><td>逐单抵扣计算与拆行</td><td>VLOOKUP + 手工拆行，约 1-2 小时，易错</td><td>规则引擎批量执行，秒级，逐单明细可溯</td></tr>
+<tr><td>模板格式整理</td><td>手工调整列序与格式，约 20 分钟</td><td>直接产出符合模板的文件</td></tr>
+<tr><td>异常数据发现</td><td>遗漏风险高，事后被导入系统退回</td><td>自动隔离并出具日志，随文件交付</td></tr>
+<tr><td>复算与审计</td><td>过程不可追溯</td><td>执行轨迹 + 计算明细全程留痕</td></tr>
+</table>
+<p>综合来看，每月数小时的机械劳动压缩为一分钟内的「上传 — 指令 — 下载」，且准确性与可追溯性显著优于人工处理。同类能力亦覆盖加班记录导入（动态筛选 + 时长换算 + 加班类型判定）与任意未知结构报表（通用字段映射），构成面向老旧系统数据流转的完整工具链。</p>
+
+</body>
+</html>
