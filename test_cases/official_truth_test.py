@@ -43,7 +43,8 @@ def compare(gt_df, out_df, cols_text, cols_num, cols_dt, label):
 
 def _llm():
     import json
-    cfg = json.load(open("agent_app/webapp/llm_config.json", encoding="utf-8"))
+    cfg_path = Path(__file__).resolve().parent.parent / "webapp" / "llm_config.json"
+    cfg = json.load(open(cfg_path, encoding="utf-8"))
     return build_llm(base_url=cfg["base_url"], api_key=cfg["api_key"],
                      model=cfg["model"], timeout=90)
 
