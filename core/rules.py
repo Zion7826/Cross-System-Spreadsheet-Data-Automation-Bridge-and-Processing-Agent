@@ -393,7 +393,7 @@ class GenericMapSkill(Skill):
                 dtype = item.get("dtype", "text")
                 try:
                     if expr:
-                        val = _safe_eval(expr, r, safe_cols)
+                        val = _safe_eval(expr, r, safe_cols, extra=rec)
                     elif src and src in df.columns:
                         val = r[src]
                     else:
@@ -429,11 +429,13 @@ class GenericMapSkill(Skill):
         return RunResult(self.key, self.name, out, anomalies, trace, {"columns": cols})
 
 
-def _safe_eval(expr: str, row, safe_cols: dict):
-    """在受限命名空间中求值，变量名只能是源表列名。"""
+def _safe_eval(expr: str, row, safe_cols: dict, extra: dict | None = None):
+    """在受限命名空间中求值，变量名可以是源表列名，也可注入已算出的目标列值。"""
     env = {"abs": abs, "round": round, "min": min, "max": max, "int": int, "float": float,
            "len": len, "str": str}
     env.update({c: row[c] for c in safe_cols})
+    if extra:
+        env.update(extra)
     return eval(compile(expr, "<expr>", "eval"), {"__builtins__": {}}, env)  # noqa: S307
 
 
@@ -494,6 +496,10 @@ class FreeformSkill(Skill):
                       "结果": "调用大模型解析指令与表结构…"})
 
         plan = llm_plan_freeform(chat, instruction, tables_meta)
+        import os as _os, sys as _sys
+        if _os.environ.get("FREEFORM_DEBUG"):
+            print("[freeform-plan] " + json.dumps(plan, ensure_ascii=False)[:1500],
+                  file=_sys.stderr)  # 诊断开关：FREEFORM_DEBUG=1 时观察模型真实规划
         spec = plan.get("target_columns") or []
         if not spec:
             raise ValueError("大模型未能从指令中规划出目标列。请把指令写得更明确"
@@ -576,24 +582,52 @@ class FreeformSkill(Skill):
         gb = [str(g).strip() for g in (agg.get("group_by") or []) if str(g).strip()]
         measures = agg.get("measures") or []
         if gb and measures:
-            missing = [g for g in gb if g not in res.output.columns]
+            # 宽松列名映射：模型给出的分组/聚合列可能用近似名（如「门店名称」vs 目标列「门店」），
+            # 双向包含唯一命中时自动对齐，避免因命名差异导致聚合失败。
+            out_cols = list(res.output.columns)
+
+            def _fuzzy(name: str) -> str | None:
+                name = str(name).strip()
+                if name in out_cols:
+                    return name
+                cands = [c for c in out_cols
+                         if name and str(c) and (name in str(c) or str(c) in name)]
+                return cands[0] if len(cands) == 1 else None
+
+            gb = [(_fuzzy(g) or g) for g in gb]
+            missing = [g for g in gb if g not in out_cols]
             if missing:
                 raise ValueError(f"分组列 {missing} 不在输出列中，无法聚合（请用目标列名）")
             agg_map = {}
             for m in measures:
                 if not isinstance(m, dict):
                     continue
-                lab = str(m.get("label") or "").strip()
+                lab = _fuzzy(str(m.get("label") or "").strip()) or str(m.get("label") or "").strip()
                 op = str(m.get("op") or "sum").strip().lower()
                 if op not in ("sum", "mean", "max", "min", "count"):
                     raise ValueError(f"聚合操作符不合法：{op}（允许 sum/mean/max/min/count）")
-                src = str(m.get("source") or lab).strip()
-                if lab not in res.output.columns or src not in res.output.columns:
+                src = _fuzzy(str(m.get("source") or lab).strip()) or str(m.get("source") or lab).strip()
+                if lab not in out_cols or src not in out_cols:
                     raise ValueError(f"聚合列「{lab}」/「{src}」不在输出列中（请用目标列名）")
                 agg_map[lab] = (src, op)
             if agg_map:
                 before = len(res.output)
                 res.output = res.output.groupby(gb, as_index=False, dropna=False).agg(**agg_map)
+                # 聚合后重算表达式列：如「周转天数=月末库存/销售额*30」依赖聚合后的目标列值，
+                # groupby 只保留 group_by+measures 列，其他表达式列需在聚合结果上重新求值。
+                for item in spec:
+                    if not str(item.get("expr") or "").strip():
+                        continue
+                    lab = str(item.get("label") or "").strip()
+                    if lab in agg_map or lab in gb or lab not in [str(s.get("label") or "").strip() for s in spec]:
+                        continue
+                    try:
+                        res.output[lab] = res.output.apply(
+                            lambda row: _safe_eval(item["expr"], row,
+                                                   {c: i for i, c in enumerate(res.output.columns)}),
+                            axis=1)
+                    except Exception:
+                        pass  # 表达式与聚合结果不兼容时保留原状（聚合列缺失即视为不适用）
                 res.trace.append({"步骤": "分组汇总",
                                   "内容": f"按 {gb} 分组：" +
                                           "、".join(f"{k}={v[1]}({v[0]})" for k, v in agg_map.items()),
@@ -672,17 +706,33 @@ class FreeformSkill(Skill):
             else:
                 if how not in ("inner", "left", "right", "outer"):
                     how = "inner"
-                lk = str(j.get("left_key") or "").strip()
-                rk = str(j.get("right_key") or "").strip()
-                if lk not in work.columns:
-                    raise ValueError(f"关联键「{lk}」在当前合并结果中不存在（多表模式列名格式：表名_列名）")
-                if rk not in right.columns:
-                    raise ValueError(f"关联键「{rk}」在表「{right_name}」中不存在（应为 表名_列名 格式）")
+                # 复合关联键支持：LLM 可能给出「表_列1,表_列2」（逗号分隔），逐段校验
+                def _split_keys(raw: str) -> list[str]:
+                    out: list[str] = []
+                    for seg in str(raw).replace("，", ",").replace(";", ",").replace("；", ",").split(","):
+                        seg = seg.strip()
+                        if seg:
+                            out.append(seg)
+                    return out
+                lks = _split_keys(j.get("left_key") or "")
+                rks = _split_keys(j.get("right_key") or "")
+                if len(lks) != len(rks):
+                    raise ValueError(f"关联键数量不匹配：左 {lks} vs 右 {rks}")
+                if not lks:
+                    raise ValueError("关联计划缺少关联键（left_key/right_key）")
+                for k in lks:
+                    if k not in work.columns:
+                        raise ValueError(f"关联键「{k}」在当前合并结果中不存在（多表模式列名格式：表名_列名）")
+                for k in rks:
+                    if k not in right.columns:
+                        raise ValueError(f"关联键「{k}」在表「{right_name}」中不存在（应为 表名_列名 格式）")
                 before = len(work)
-                work[lk] = norm_key(work[lk])
-                right[rk] = norm_key(right[rk])
-                work = work.merge(right, left_on=lk, right_on=rk, how=how)
-                steps.append(f"{work_name} 与 {right_name} 按 {lk}={rk} 做 {how} 关联"
+                for k in lks:
+                    work[k] = norm_key(work[k])
+                for k in rks:
+                    right[k] = norm_key(right[k])
+                work = work.merge(right, left_on=lks, right_on=rks, how=how)
+                steps.append(f"{work_name} 与 {right_name} 按 {'+'.join(lks)}={'+'.join(rks)} 做 {how} 关联"
                              f"（{before} 行 → {len(work)} 行）")
             work_name = f"{work_name}+{right_name}"
         return work.reset_index(drop=True), "；".join(steps)

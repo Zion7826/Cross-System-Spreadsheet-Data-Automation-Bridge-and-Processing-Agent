@@ -175,10 +175,32 @@ def build_mask(df: pd.DataFrame, conds: list[dict]) -> pd.Series:
 
     语义约定：对 between / 数值比较，取值为空（NaT / NaN）的行**不会被排除**——
     无法证明其不符合条件的行交给后续规则校验去隔离并记录，避免脏数据被静默丢弃。
+    组合语义：不同字段之间 AND；**同字段同 op 的 eq/contains 多条之间 OR**（用户
+    「只要 A 和 B」是枚举语义，不是与），比较类操作（gt/lt/between 等）仍逐条 AND。
     """
-    mask = pd.Series([True] * len(df), index=df.index)
     if df.empty:
-        return mask
+        return pd.Series([True] * len(df), index=df.index)
+    # 预处理：合并同字段同 op 的枚举条件（eq/contains）
+    from collections import defaultdict
+    enum_groups: dict[tuple, list] = defaultdict(list)
+    for c in (conds or []):
+        if c.get("op") in ("eq", "contains"):
+            enum_groups[(c.get("field"), c.get("op"))].append(c)
+    merged: list[dict] = []
+    seen: set[tuple] = set()
+    for c in (conds or []):
+        if c.get("op") in ("eq", "contains"):
+            k = (c.get("field"), c.get("op"))
+            if k in seen:
+                continue
+            seen.add(k)
+            vals = [x.get("value") for x in enum_groups[k]]
+            merged.append(dict(c, value=vals if len(vals) > 1 else vals[0]))
+        else:
+            merged.append(c)
+    conds = merged
+
+    mask = pd.Series([True] * len(df), index=df.index)
     for c in conds:
         f, op, val = c.get("field"), c.get("op"), c.get("value")
         col_name = _resolve_column(df, f)
@@ -191,9 +213,26 @@ def build_mask(df: pd.DataFrame, conds: list[dict]) -> pd.Series:
                 c2 = pd.to_datetime(col, errors="coerce")
                 m = ((c2 >= s) & (c2 <= e)) | c2.isna()
             elif op == "contains":
-                m = col.astype(str).str.contains(str(val), case=False, na=False)
+                if isinstance(val, (list, tuple, set)):
+                    m = pd.Series([False] * len(df), index=df.index)
+                    for v in val:
+                        m = m | col.astype(str).str.contains(str(v), case=False, na=False)
+                else:
+                    m = col.astype(str).str.contains(str(val), case=False, na=False)
             elif op == "eq":
-                if pd.api.types.is_numeric_dtype(col):
+                if isinstance(val, (list, tuple, set)):
+                    if pd.api.types.is_numeric_dtype(col):
+                        nums = []
+                        for v in val:
+                            try:
+                                nums.append(float(v))
+                            except (TypeError, ValueError):
+                                nums.append(str(v).strip())
+                        nums_s = {str(x) for x in nums}
+                        m = col.astype(str).str.strip().isin(nums_s)
+                    else:
+                        m = col.astype(str).str.strip().isin({str(v).strip() for v in val})
+                elif pd.api.types.is_numeric_dtype(col):
                     try:
                         m = col == float(val)
                     except (TypeError, ValueError):

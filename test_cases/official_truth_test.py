@@ -46,7 +46,7 @@ def _llm():
     cfg_path = Path(__file__).resolve().parent.parent / "webapp" / "llm_config.json"
     cfg = json.load(open(cfg_path, encoding="utf-8"))
     return build_llm(base_url=cfg["base_url"], api_key=cfg["api_key"],
-                     model=cfg["model"], timeout=90)
+                     model=cfg["model"], timeout=280)
 
 def test_leave():
     """测试B：OA 请假单 → HR 最低版本导入（13 行真值）。"""

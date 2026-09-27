@@ -42,35 +42,66 @@ def build_llm(base_url: str | None = None, api_key: str | None = None,
                        {"type": "image_url",
                         "image_url": {"url": f"data:image/png;base64,{image_b64}"}}]
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        # 流式读取：推理模型的思考期 delta 会持续到达，read 超时只约束「字节间隔」，
+        # 避免长思考被整体超时误杀（非流式下复杂指令曾出现 90s+ 的纯思考期）。
         payload = {"model": model,
                    "messages": [{"role": "system", "content": system},
                                 {"role": "user", "content": content}],
-                   "temperature": 0}
+                   "temperature": 0,
+                   "stream": True}
+        sess = requests.Session()
         if _local:
-            with requests.Session() as s:
-                s.trust_env = False
-                r = s.post(url, headers=headers, json=payload, timeout=timeout)
-        else:
-            r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            sess.trust_env = False
+        r = sess.post(url, headers=headers, json=payload, timeout=timeout, stream=True)
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+        parts: list[str] = []
+        for raw in r.iter_lines(decode_unicode=True):
+            if not raw or not str(raw).startswith("data:"):
+                continue
+            data = str(raw)[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                obj = json.loads(data)
+            except Exception:
+                continue
+            ch = (obj.get("choices") or [{}])[0]
+            delta = ch.get("delta") or {}
+            piece = delta.get("content")
+            if piece:
+                parts.append(piece)
+            msg = ch.get("message") or {}
+            if msg.get("content"):          # 兼容个别网关非增量返回
+                parts.append(msg["content"])
+        return "".join(parts)
 
     return chat
 
 
 def json_llm(chat: Callable | None):
-    """包装成"返回 JSON"的调用：失败自动重试，最终失败返回空 dict。"""
+    """包装成"返回 JSON"的调用：失败自动重试，最终失败返回空 dict。
+
+    重试不是盲目重发：解析失败时把上一轮错误反馈进 prompt 帮模型自修复。
+    """
     if chat is None:
         return lambda *a, **k: {}
 
     def call(prompt: str) -> dict:
-        full = prompt + "\n只输出 JSON，不要任何解释和代码块标记。"
+        base = prompt + "\n只输出 JSON，不要任何解释和代码块标记。"
+        full = base
         for attempt in range(3):
             try:
                 txt = chat(full)
                 m = re.search(r"\{.*\}", txt, re.S)
                 if m:
-                    return json.loads(m.group())
+                    try:
+                        return json.loads(m.group())
+                    except Exception as e:
+                        # JSON 合法性问题：带错误反馈重试（截断/尾逗号/单引号等）
+                        full = (base + f"\n\n注意：上一次输出的 JSON 解析失败（{e}）。"
+                                "请重新输出严格合法的 JSON：字符串用双引号、无注释、无尾逗号、"
+                                "内容必须完整闭合。")
+                        continue
             except Exception:
                 pass  # 网关偶发超时/限流，重试
         return {}
@@ -121,13 +152,17 @@ def llm_plan_freeform(chat: Callable | None, instruction: str,
         "\"left_key\": \"表A_工号\", \"right_key\": \"表B_员工编号\", \"how\": \"inner|left|right|outer\"}}\n"
         "第一条的 left 是起始表；后续条目的 left_key 引用「当前已合并结果中的列名」（表名_列名格式）。\n"
         "只有当两张表结构相同（同列名、纵向追加）时才用 {\"how\": \"union\"}（不需要键）。\n"
+        "需要多个列联合才能唯一匹配时用复合键，键之间用英文逗号分隔，左右数量必须一致，"
+        "如 \"left_key\": \"表A_门店编号,表A_品类\", \"right_key\": \"表B_门店代码,表B_大类\"。\n"
         "关联键选择语义上唯一标识同一实体的列（如工号、订单号）；人员标识格式可能不同（数字 vs 文本），引擎会自动归一。\n"
         if multi else "单表时 joins 输出空数组 []。\n"
     )
     prompt = (
         "你是数据转换规划器。用户上传了一张或多张表，并用自然语言描述了想要的结果。\n"
         "你的任务：输出「目标模板列定义」「筛选条件」和（多表时的）「跨表关联计划」，"
-        "交给下游确定性引擎逐行执行。只输出 JSON。\n\n"
+        "交给下游确定性引擎逐行执行。只输出 JSON。\n"
+        "作答要求：这是常规结构化任务，直接给出最终 JSON，不要逐条复述规则、"
+        "不要枚举备选方案、不要反复自我校验。\n\n"
         "输出格式：\n"
         "{\"joins\": [...],\n"
         " \"target_columns\": [{\"label\": \"目标列名\", \"source\": \"来源列名或空串\", "
@@ -163,6 +198,21 @@ def llm_plan_freeform(chat: Callable | None, instruction: str,
         "measures=[{\"label\":\"销售总额\",\"op\":\"sum\",\"source\":\"金额列\"}]。\n"
         "   逐行明细输出（不分组）时 aggregate 的 group_by 给空数组。\n\n"
         + join_rule +
+        "\n【端到端示例（两表：门店销售表、库存月报表；指令为：按门店品类汇总销售额并匹配库存、算周转天数）】\n"
+        "正确输出（照此结构作答，不要现场重新推导）：\n"
+        "{\"joins\":[{\"left\":\"门店销售表\",\"right\":\"库存月报表\","
+        "\"left_key\":\"门店销售表_门店编号,门店销售表_品类\","
+        "\"right_key\":\"库存月报表_门店代码,库存月报表_品类\",\"how\":\"left\"}],\n"
+        " \"target_columns\":[{\"label\":\"门店\",\"source\":\"门店销售表_门店名称\",\"dtype\":\"text\",\"expr\":\"\"},"
+        "{\"label\":\"品类\",\"source\":\"门店销售表_品类\",\"dtype\":\"text\",\"expr\":\"\"},"
+        "{\"label\":\"销售额\",\"source\":\"门店销售表_实收金额\",\"dtype\":\"number\",\"expr\":\"\"},"
+        "{\"label\":\"月末库存\",\"source\":\"库存月报表_月末库存金额\",\"dtype\":\"number\",\"expr\":\"\"},"
+        "{\"label\":\"周转天数\",\"source\":\"\",\"dtype\":\"number\",\"expr\":\"float(月末库存)/float(销售额)*30 if 销售额 else None\"}],\n"
+        " \"filters\":[],"
+        "\"aggregate\":{\"group_by\":[\"门店\",\"品类\"],"
+        "\"measures\":[{\"label\":\"销售额\",\"op\":\"sum\",\"source\":\"销售额\"},"
+        "{\"label\":\"月末库存\",\"op\":\"max\",\"source\":\"月末库存\"}]}}\n"
+        "（注意：表达式中引用的是目标列名；聚合在关联之后执行，非统计列取 max 兜底）\n"
         f"\n各表结构：{json.dumps(tables, ensure_ascii=False)}\n"
         f"用户指令：{instruction}"
     )
